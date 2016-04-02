@@ -1,11 +1,11 @@
 import logging
 from dataObjects import place
-from jsonProcessing import convertPlaceToObject, mergerEachStepsPoints
+from jsonProcessing import convertPlaceToObject, get_points_from_leg, get_points_from_polyline
 
 def calculateLastPointInRadiusIndex(radius,location,legHeadingToNextDestination):
     logging.info("Calculate Last Point In radius")
     lastPointIndex=0
-    polyline=mergerEachStepsPoints(legHeadingToNextDestination)
+    polyline=get_points_from_leg(legHeadingToNextDestination)
     for index, point in enumerate(polyline):
         if isPointInRadius(point, location, radius):
             lastPointIndex=index
@@ -23,10 +23,9 @@ def isPointInRadius(point, location, radius):
 
 def calculateOrderedListOfNearestPlaces(places,point):
     logging.info("OrderingPlacesByNearestToPoint: "+str(point))
-    print "PLaces:"+str(places)
     sortedPlaces=[]
-    for placeIndex, place in enumerate(places['results']):
-        placeObj=convertPlaceToObject(place)
+    for placeIndex, place in enumerate(places):
+        placeObj=place
         differenceLat=placeObj.location[0]-point[0]
         differenceLng=placeObj.location[1]-point[1]
         distanceAway=abs(differenceLat)+abs(differenceLng)
@@ -54,7 +53,7 @@ def getTravelRadius(poolMember,index,poolLeader,eta):
         metersPerMinute=240
         conversionValue=0.5
     elif(poolMember.methodOfTransport=='walking'):
-        metersPerMinute=80
+        metersPerMinute=300
         conversionValue=0.1
     elif(poolMember.methodOfTransport=='bicycling'):
         metersPerMinute=160
@@ -69,3 +68,60 @@ def getTravelRadius(poolMember,index,poolLeader,eta):
     placesRadius=(etaMinutes* metersPerMinute)*conversionValue
     logging.info(poolMember.name+" can travel "+str(placesRadius)+" meters")
     return placesRadius
+
+def findFirstOverLappingPointForMember(memberPolyline, leaderLegToNextMember):
+    logging.info("Get OverlappingPoint Index")
+    memberPoints=get_points_from_polyline(memberPolyline)
+    leaderPoints=get_points_from_leg(leaderLegToNextMember)
+    memberIndex=0
+    leaderIndex=0
+    while len(memberPoints)>(memberIndex+1):
+        while len(leaderPoints)>(leaderIndex+1):
+             if(intersect(memberPoints[memberIndex],memberPoints[memberIndex+1],leaderPoints[leaderIndex],leaderPoints[leaderIndex+1])):
+                logging.info("First Intersecting Point at "+str(memberPoints[memberIndex+1]))
+                print("intersect")
+                return (memberIndex+1), memberPoints
+             elif(memberPoints[memberIndex]==leaderPoints[leaderIndex]):
+                logging.info("First Equal Point at "+str(memberPoints[memberIndex]))
+                print("equal")
+                return (memberIndex), memberPoints
+             #print(str(memberPoints[memberIndex])+str(leaderPoints[leaderIndex]))
+             leaderIndex+=1
+        memberIndex+=1
+        leaderIndex=0
+
+    logging.info("Failed to find a matching point")
+    return None, None
+
+def findFirstOverLappingPointForMember2(memberPolyline, leaderRoute):
+    logging.info("Get OverlappingPoint Index")
+    memberPoints=get_points_from_polyline(memberPolyline)
+    leaderPoints=get_points_from_polyline(leaderRoute)
+    memberIndex=0
+    leaderIndex=0
+    while len(memberPoints)>(memberIndex+1):
+        while len(leaderPoints)>(leaderIndex+1):
+
+             if(memberPoints[memberIndex]==leaderPoints[leaderIndex]):
+                logging.info("First Equal Point at "+str(memberPoints[memberIndex]))
+                print("equal")
+                return (memberIndex), memberPoints
+             elif(intersect(memberPoints[memberIndex],memberPoints[memberIndex+1],leaderPoints[leaderIndex],leaderPoints[leaderIndex+1])):
+                logging.info("First Intersecting Point at "+str(memberPoints[memberIndex+1]))
+                print("intersect")
+                return (memberIndex), memberPoints
+             #print(str(memberPoints[memberIndex])+str(leaderPoints[leaderIndex]))
+             leaderIndex+=1
+        memberIndex+=1
+        leaderIndex=0
+
+    logging.info("Failed to find a matching point")
+    return None, None
+
+
+def ccw(A,B,C):
+    return (C[1]-A[1]) * (B[0]-A[0]) > (B[1]-A[1]) * (C[0]-A[0])
+
+# Return true if line segments AB and CD intersect
+def intersect(A,B,C,D):
+    return ccw(A,C,D) != ccw(B,C,D) and ccw(A,B,C) != ccw(A,B,D)

@@ -1,8 +1,9 @@
 import logging
-from jsonProcessing import getEtaOfLeg, getEta
+from jsonProcessing import getEtaOfLeg, getEta, getLeg, convertValidPlacesTypesToObjectArray
 from googleAPIRequests import getDirections, getPlaces
 from sortMembers import getPoolMembersMeetLocations, sortPoolMembersPositionInArrayByRoute
-from travelRadiusMethods import calculateLastPointInRadiusIndex, calculateOrderedListOfNearestPlaces, getTravelRadius
+from travelRadiusMethods import calculateLastPointInRadiusIndex, calculateOrderedListOfNearestPlaces, \
+    getTravelRadius, findFirstOverLappingPointForMember,findFirstOverLappingPointForMember2
 import dataObjects
 
 nameIndex=0
@@ -22,8 +23,8 @@ def createResponseMessage(poolLeader,poolMembers):
         memberString="PoolMember:"
         memberString+=poolMember.name+";"
         memberString+=str(poolMember.origin)+";"
-        memberString+=poolMember.meetPoint.name+";"
-        memberString+=str(poolMember.meetPoint.location)+";"
+        memberString+=poolMember.meetPoint.name+"<>"
+        memberString+=str(poolMember.meetPoint.location)+"<>"
         memberString+=str(poolMember.meetPoint.types)+";"
         #memberString+=
         print str(getEta(poolMember.getDirections()))
@@ -78,45 +79,104 @@ def parsePoolRequest(requestString):
 #Then gets the directions to each persons location
 def handlePoolRequest(requestString):
     logging.info("handlePoolRequest")
-    #Set up objects
-    poolLeader, poolMembers, poolDestination=parsePoolRequest(requestString)
-
-    #extract the locations
-    poolMembersMeetLocations=getPoolMembersMeetLocations(poolMembers)
-    logging.info("get direct pool directions")
-    #directDirections=getDirections(poolLeader[locationIndex],poolDestination,poolLeader[methodIndex],[])
-    poolLeader.setWayPoints(poolMembersMeetLocations)
-    poolLeader.updateDirections()
-    poolDirections=poolLeader.getDirections()
-    #poolDirections=getDirections(poolLeader.origin,poolLeader.destination ,poolLeader.methodOfTransport,poolMembersMeetLocations)
-    #poolLeader.setDirections(poolDirections)
-    #poolmember position in array corresponds to directions their leg
-    poolMembers=sortPoolMembersPositionInArrayByRoute(poolMembers,poolDirections)
-    #sort poolMembers so that the array starts with the first
-
-    #for index,leg in enumerate(poolDirections['routes'][0]['legs']):
+    poolLeader, poolMembers, poolDirections= initializeFirstRoute(requestString)
     legIndex=0
     totalSecondsFromPreviousLegs=0
+
     while (legIndex<len(poolMembers)):
-        leg=poolDirections['routes'][0]['legs'][legIndex]
-        nextLeg=poolDirections['routes'][0]['legs'][legIndex+1]
+        #Get the directions to the poolMember and the directions from the pool member
+        leg=getLeg(poolDirections,legIndex)
+        nextLeg=getLeg(poolDirections,legIndex+1)
         logging.info("Calculating directions for: "+poolMembers[legIndex].name)
+        #Calculate the time it will take for the poolLeader to arrive at the poolMembers current locatioin
         seconds, minutes=getEtaOfLeg(leg)
         totalSecondsFromPreviousLegs+=seconds
-        radius=getTravelRadius(poolMembers[legIndex],legIndex,poolLeader,totalSecondsFromPreviousLegs)
-        places=getPlaces(poolMembers[legIndex].origin,radius)
 
+
+        #Using the time generate a travel radius
+        radius=getTravelRadius(poolMembers[legIndex],legIndex,poolLeader,totalSecondsFromPreviousLegs)
+        #get the places within the travel radius
+        places=convertValidPlacesTypesToObjectArray(getPlaces(poolMembers[legIndex].origin,radius))
+        #assume that the last point in the directions from the user within the radius is on ideal place to meet.
         legPolylinePoints, indexOfLastPointInRadius=calculateLastPointInRadiusIndex(radius,poolMembers[legIndex].origin,nextLeg)
+        #with that point find the closest places. With the first value in the array being the closest
         placesNearestToTheFurthestPossibleTravelPoint=calculateOrderedListOfNearestPlaces(places,legPolylinePoints[indexOfLastPointInRadius])
-        #now we assume that the closest point is optimal
-        poolMembers[legIndex].setMeetPoint(placesNearestToTheFurthestPossibleTravelPoint[0])
-        poolMembers[legIndex].setPlaces(placesNearestToTheFurthestPossibleTravelPoint)
+        #save the meetPoint and calculate the directions
+        poolMembers[legIndex].storePlacesAndSelectMeetPoint(placesNearestToTheFurthestPossibleTravelPoint)
         poolMembers[legIndex].setDirections()
+
+
+        #Then recalculate the full trip and the poolmembers directions
         poolMembersMeetLocations=getPoolMembersMeetLocations(poolMembers)
         #poolDirections=getDirections(poolLeader.origin,poolLeader.destination ,poolLeader.methodOfTransport,poolMembersMeetLocations)
         poolLeader.setWayPoints(poolMembersMeetLocations)
         poolLeader.updateDirections()
         poolDirections=poolLeader.getDirections()
+        #If the directions of both the leader and poolmember overlap
+        #then find the point at which they first over lap and then find places near it
+
+        firstOverlappingPointIndex,memberPoints=findFirstOverLappingPointForMember\
+            (poolMembers[legIndex].getDirections()['routes'][0]['overview_polyline']['points'],getLeg(poolDirections,legIndex+1))
+        if(not firstOverlappingPointIndex==None):
+            print poolMembers[legIndex].name+" recalculating based on overlapping"
+            print str(memberPoints[firstOverlappingPointIndex])
+            print str (poolMembers[legIndex].getDirections()['routes'][0]['overview_polyline']['points'])
+            print str (poolDirections['routes'][0]['overview_polyline']['points'])
+
+            placesNearestToTheOverLappingPoint=calculateOrderedListOfNearestPlaces(places,memberPoints[firstOverlappingPointIndex])
+            poolMembers[legIndex].setMeetPoint(placesNearestToTheOverLappingPoint[0])
+            poolMembers[legIndex].meetPoint.location=memberPoints[firstOverlappingPointIndex]
+            poolMembers[legIndex].setPlaces(placesNearestToTheOverLappingPoint)
+            poolMembers[legIndex].setDirections()
+        else:
+            firstOverlappingPointIndex2,memberPoints2=findFirstOverLappingPointForMember\
+            (poolMembers[legIndex].getDirections()['routes'][0]['overview_polyline']['points'],getLeg(poolDirections,legIndex))
+            if(not firstOverlappingPointIndex2==None):
+                print poolMembers[legIndex].name+"2 nd recalculating based on overlapping"
+                print str(memberPoints2[firstOverlappingPointIndex2])
+                print str (poolMembers[legIndex].getDirections()['routes'][0]['overview_polyline']['points'])
+                print str (poolDirections['routes'][0]['overview_polyline']['points'])
+                placesNearestToTheOverLappingPoint=calculateOrderedListOfNearestPlaces(places,memberPoints2[firstOverlappingPointIndex2])
+                poolMembers[legIndex].setMeetPoint(placesNearestToTheOverLappingPoint[0])
+                poolMembers[legIndex].meetPoint.location=memberPoints2[firstOverlappingPointIndex2]
+                poolMembers[legIndex].setPlaces(placesNearestToTheOverLappingPoint)
+                poolMembers[legIndex].setDirections()
+
+
+
+        #Then recalculate the full trip and the poolmembers directions
+        poolMembersMeetLocations=getPoolMembersMeetLocations(poolMembers)
+        #poolDirections=getDirections(poolLeader.origin,poolLeader.destination ,poolLeader.methodOfTransport,poolMembersMeetLocations)
+        poolLeader.setWayPoints(poolMembersMeetLocations)
+        poolLeader.updateDirections()
+        poolDirections=poolLeader.getDirections()
+
+        firstOverlappingPointIndex,memberPoints=findFirstOverLappingPointForMember2\
+            (poolMembers[legIndex].getDirections()['routes'][0]['overview_polyline']['points'],poolDirections['routes'][0]['overview_polyline']['points'])
+        if(not firstOverlappingPointIndex==None):
+            print poolMembers[legIndex].name+" recalculating based on overlapping"
+            print str(memberPoints[firstOverlappingPointIndex])
+            print str (poolMembers[legIndex].getDirections()['routes'][0]['overview_polyline']['points'])
+            print str (poolDirections['routes'][0]['overview_polyline']['points'])
+
+            placesNearestToTheOverLappingPoint=calculateOrderedListOfNearestPlaces(places,memberPoints[firstOverlappingPointIndex])
+            poolMembers[legIndex].setMeetPoint(placesNearestToTheOverLappingPoint[0])
+            poolMembers[legIndex].meetPoint.location=memberPoints[firstOverlappingPointIndex]
+            poolMembers[legIndex].setPlaces(placesNearestToTheOverLappingPoint)
+            poolMembers[legIndex].setDirections()
+
+
+
+        #Then recalculate the full trip and the poolmembers directions
+        poolMembersMeetLocations=getPoolMembersMeetLocations(poolMembers)
+        #poolDirections=getDirections(poolLeader.origin,poolLeader.destination ,poolLeader.methodOfTransport,poolMembersMeetLocations)
+        poolLeader.setWayPoints(poolMembersMeetLocations)
+        poolLeader.updateDirections()
+        poolDirections=poolLeader.getDirections()
+
+
+        print poolDirections['routes'][0]['overview_polyline']['points']
+
         legIndex+=1 #incriment
         #findRealisticPlaceToMeetLeader(placesWithinRadius,etaLeaderToMember,polyine[indexOfLastPointInRadius],poolMembers[index][methodIndex])
         #use eta of leader to get rough draft of how far one could travell
@@ -156,18 +216,15 @@ def getIdealMeetingPoints():
      #   how off the calculation was=  difference /eta
      #   repeat with how of the calculation was x length/poly line
 
-def getPossibleTravelDistanceWithinLeaderEta(leaderEta, ):
-    pass
 
-
-
-def printDurations(jsonDirections):
-    numSteps=len(jsonDirections['routes'][0]['legs'][0]['steps'])
-    total_dist=0
-    print numSteps
-    for x in xrange(numSteps):
-        print("Step {}:".format(x))
-        print(jsonDirections['routes'][0]['legs'][0]['steps'][x]['html_instructions'])
-        print(jsonDirections['routes'][0]['legs'][0]['steps'][x]['duration']['text']+"\n")
-        #total_dist+=int(jsonDirections['routes'][0]['legs'][0]['steps'][x]['duration']['text'])
-
+def initializeFirstRoute(requestString):
+    poolLeader, poolMembers, poolDestination=parsePoolRequest(requestString)
+    #extract the locations
+    poolMembersMeetLocations=getPoolMembersMeetLocations(poolMembers)
+    logging.info("Get directions with each poolmembers origin")
+    poolLeader.setWayPoints(poolMembersMeetLocations)
+    poolLeader.updateDirections()
+    poolDirections=poolLeader.getDirections()
+    #poolmember position in array corresponds to directions their leg
+    poolMembers=sortPoolMembersPositionInArrayByRoute(poolMembers,poolDirections)
+    return poolLeader, poolMembers, poolDirections

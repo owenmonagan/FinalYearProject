@@ -32,6 +32,7 @@ def getPlaces(latlong,radius):
     #lng=r['results'][0]['geometry']['location']['lng']
     #name=r['results'][0]['name']
     logging.info("Places Retrieved")
+
     return r
 
 def getLatLong(place_name):

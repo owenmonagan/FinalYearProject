@@ -47,7 +47,8 @@ class ThreadedTCPHandler (SocketServer.BaseRequestHandler):
 
     def handle(self):
         requestMessage=self.request.recv(1024)
-
+        print"Request Message:"
+        print(requestMessage)
         if("PoolRequest" in requestMessage):
             response=handlePoolRequest(requestMessage)
             self.request.sendall(response)
@@ -73,9 +74,9 @@ if __name__== "__main__":
         server_thread = threading.Thread(target=server.serve_forever)
         server_thread.daemon = True
         server_thread.start()
-        print("About to launch test")
-        thread.start_new_thread(testClient,(HOST,PORT))
-        print("test launched")
+        #print("About to launch test")
+        #thread.start_new_thread(testClient,(HOST,PORT))
+        #print("test launched")
 
         while(server.server_alive==True):
             pass

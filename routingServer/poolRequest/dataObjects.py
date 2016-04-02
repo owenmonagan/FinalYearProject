@@ -1,4 +1,5 @@
 from googleAPIRequests import getLatLong, getDirections
+
 class poolMember():
     def __init__(self, name, origin, methodOfTransport):
                 self.name = name
@@ -9,6 +10,9 @@ class poolMember():
                 self.placesNear=None
                 self.directionsToMeetPoint=None
 
+    def storePlacesAndSelectMeetPoint(self,places):
+        self.setMeetPoint(places[0])
+        self.setPlaces(places)
 
     def setMeetPoint(self,meetPoint):
         self.meetPoint=meetPoint
